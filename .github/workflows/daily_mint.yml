@@ -2,11 +2,7 @@ name: Daily Mint Newspaper
 
 on:
   schedule:
-    # Runs at 10:00 PM IST (which is 4:30 PM UTC)
-    # IST is UTC+5:30, so 10:00 PM IST = 4:30 PM UTC
     - cron: '30 16 * * *'
-  
-  # Allows manual trigger from GitHub Actions tab (for testing)
   workflow_dispatch:
 
 jobs:
