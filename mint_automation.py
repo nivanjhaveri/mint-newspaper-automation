@@ -1,74 +1,126 @@
 import os
-import requests
-from datetime import datetime
+import time
 import smtplib
+from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
 from email import encoders
-import time
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait, Select
+from selenium.webdriver.support import expected_conditions as EC
 
 def download_mint_pdf():
-    """Download the Mint newspaper PDF for today's date"""
+    """Download the Mint newspaper PDF using Selenium"""
     
-    # Get today's date
-    today = datetime.now()
-    date_str = today.strftime("%Y-%m-%d")
+    print("Setting up browser...")
     
-    print(f"Attempting to download Mint newspaper for {date_str}...")
+    # Set up Chrome options for headless browsing
+    chrome_options = Options()
+    chrome_options.add_argument('--headless')
+    chrome_options.add_argument('--no-sandbox')
+    chrome_options.add_argument('--disable-dev-shm-usage')
+    chrome_options.add_argument('--disable-gpu')
     
-    # The website uses a form submission, we'll need to construct the PDF URL
-    # Based on the website structure, the PDF is likely generated/fetched from their backend
-    
-    # We'll try to make a POST request to the form
-    url = "https://www.tradingref.com/mint"
-    
-    # Set up headers to mimic a browser
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Referer': 'https://www.tradingref.com/mint'
+    # Set download directory
+    download_dir = os.path.abspath(".")
+    prefs = {
+        "download.default_directory": download_dir,
+        "download.prompt_for_download": False,
+        "download.directory_upgrade": True,
+        "plugins.always_open_pdf_externally": True
     }
+    chrome_options.add_experimental_option("prefs", prefs)
     
-    # Parameters for the form submission
-    params = {
-        'date': date_str,
-        'language': 'english',
-        'newspaper': 'mint',
-        'edition': 'mumbai'
-    }
-    
-    session = requests.Session()
+    driver = None
+    pdf_filename = None
     
     try:
-        # First, visit the main page to get any cookies/session
-        session.get(url, headers=headers)
-        time.sleep(2)
+        # Initialize the Chrome driver
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.set_page_load_timeout(30)
         
-        # Try to get the PDF - the actual endpoint might be different
-        # We may need to inspect the network requests to find the exact endpoint
-        # For now, we'll try a common pattern
+        print("Navigating to website...")
+        driver.get("https://www.tradingref.com/mint")
         
-        pdf_url = f"https://www.tradingref.com/download/mint/{date_str}/mumbai/english"
+        # Wait for page to load
+        time.sleep(3)
         
-        response = session.get(pdf_url, headers=headers, allow_redirects=True, timeout=30)
+        # Get today's date
+        today = datetime.now()
+        date_str = today.strftime("%Y-%m-%d")
         
-        # Check if we got a PDF
-        if response.status_code == 200 and 'application/pdf' in response.headers.get('Content-Type', ''):
-            filename = f"Mint_Mumbai_{today.strftime('%d_%b_%Y')}.pdf"
-            with open(filename, 'wb') as f:
-                f.write(response.content)
-            print(f"✅ PDF downloaded successfully: {filename}")
-            return filename
-        else:
-            print(f"❌ Failed to download PDF. Status: {response.status_code}")
-            print(f"Content-Type: {response.headers.get('Content-Type')}")
+        print(f"Filling form for date: {date_str}")
+        
+        # Wait for and select date
+        date_input = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "date"))
+        )
+        date_input.clear()
+        date_input.send_keys(date_str)
+        
+        # Select language (English)
+        language_select = Select(driver.find_element(By.ID, "language"))
+        language_select.select_by_value("english")
+        
+        # Select newspaper (Mint)
+        newspaper_select = Select(driver.find_element(By.ID, "newspaper"))
+        newspaper_select.select_by_value("mint")
+        
+        # Select edition (Mumbai)
+        edition_select = Select(driver.find_element(By.ID, "edition"))
+        edition_select.select_by_value("mumbai")
+        
+        time.sleep(1)
+        
+        print("Clicking download button...")
+        
+        # Find and click the download button
+        download_button = driver.find_element(By.ID, "downloadBtn")
+        driver.execute_script("arguments[0].click();", download_button)
+        
+        # Wait for download to complete (check for file in download directory)
+        print("Waiting for PDF download...")
+        timeout = 60  # 60 seconds timeout
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            # Look for PDF files in the download directory
+            files = [f for f in os.listdir(download_dir) if f.endswith('.pdf')]
+            if files:
+                # Get the most recent PDF file
+                pdf_filename = max(files, key=lambda f: os.path.getctime(os.path.join(download_dir, f)))
+                
+                # Check if file is completely downloaded (not .crdownload)
+                if not pdf_filename.endswith('.crdownload'):
+                    print(f"✅ PDF downloaded: {pdf_filename}")
+                    break
+            time.sleep(2)
+        
+        if not pdf_filename:
+            print("❌ PDF download timed out")
             return None
-            
+        
+        # Rename the file to a consistent name
+        new_filename = f"Mint_Mumbai_{today.strftime('%d_%b_%Y')}.pdf"
+        if pdf_filename != new_filename:
+            os.rename(pdf_filename, new_filename)
+            pdf_filename = new_filename
+        
+        return pdf_filename
+        
     except Exception as e:
         print(f"❌ Error downloading PDF: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return None
+        
+    finally:
+        if driver:
+            driver.quit()
 
 def send_email_with_pdf(pdf_filename):
     """Send email with PDF attachment"""
@@ -91,7 +143,7 @@ def send_email_with_pdf(pdf_filename):
     msg['To'] = receiver_email
     msg['Subject'] = subject
     
-    # Add body (simple text)
+    # Add body
     body = "Your daily Mint newspaper is attached."
     msg.attach(MIMEText(body, 'plain'))
     
@@ -117,6 +169,8 @@ def send_email_with_pdf(pdf_filename):
         
     except Exception as e:
         print(f"❌ Error sending email: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def main():
